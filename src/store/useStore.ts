@@ -168,22 +168,41 @@ export const useStore = create<AppState>()(
         const revisionDays = dates.length - coverageDays;
 
         const notDone = topics.filter(t => t.status !== 'Done');
-        // Sort: Hard first, then Medium, then Easy for balanced distribution
+
+        // Extract unit number for priority sorting
+        const unitNum = (t: Topic) => {
+          const m = t.unit.match(/(\d+)/);
+          return m ? parseInt(m[1]) : 0;
+        };
+
+        // Prioritize second half (units 3,4,5) first since first half was in midsem
+        // Within same half, sort by difficulty (Hard first)
         const sorted = [...notDone].sort((a, b) => {
+          const aUnit = unitNum(a);
+          const bUnit = unitNum(b);
+          const aIsSecondHalf = aUnit >= 3 ? 0 : 1; // 0 = second half (priority), 1 = first half
+          const bIsSecondHalf = bUnit >= 3 ? 0 : 1;
+          if (aIsSecondHalf !== bIsSecondHalf) return aIsSecondHalf - bIsSecondHalf;
+          // Within same half, sort by unit number descending (later units first)
+          if (aUnit !== bUnit) return bUnit - aUnit;
           const dOrder: Record<string, number> = { Hard: 0, Medium: 1, Easy: 2 };
           return (dOrder[a.difficulty] ?? 1) - (dOrder[b.difficulty] ?? 1);
         });
 
-        // Interleave hard and easy
-        const hard = sorted.filter(t => t.difficulty === 'Hard');
-        const medium = sorted.filter(t => t.difficulty === 'Medium');
-        const easy = sorted.filter(t => t.difficulty === 'Easy');
+        // Interleave across courses so each day covers multiple subjects
+        const courses = [...new Set(sorted.map(t => t.course))];
+        const courseQueues = new Map(courses.map(c => [c, sorted.filter(t => t.course === c)]));
         const interleaved: Topic[] = [];
-        const maxLen = Math.max(hard.length, medium.length, easy.length);
-        for (let i = 0; i < maxLen; i++) {
-          if (i < hard.length) interleaved.push(hard[i]);
-          if (i < medium.length) interleaved.push(medium[i]);
-          if (i < easy.length) interleaved.push(easy[i]);
+        let added = true;
+        while (added) {
+          added = false;
+          for (const c of courses) {
+            const q = courseQueues.get(c)!;
+            if (q.length > 0) {
+              interleaved.push(q.shift()!);
+              added = true;
+            }
+          }
         }
 
         const maxHoursPerDay = 9;
