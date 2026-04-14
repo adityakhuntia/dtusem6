@@ -263,11 +263,11 @@ export const useStore = create<AppState>()(
 
         if (missedTopicIds.length === 0) return;
 
-        // Remove missed topics from past plans, distribute to future days
+        // Only redistribute if there are future days available
         const futurePlans = dailyPlans.filter(p => p.date >= today);
-        const maxHoursPerDay = 10;
+        if (futurePlans.length === 0) return;
 
-        // Calculate current load per future day
+        // Calculate current load per future day (preserve existing topics)
         const futureLoads = futurePlans.map(p => {
           const hours = p.topicsPlanned.reduce((s, id) => s + (topicMap.get(id)?.estimatedTime || 1), 0);
           return { date: p.date, hours, planned: [...p.topicsPlanned] };
@@ -278,22 +278,21 @@ export const useStore = create<AppState>()(
         for (const tid of uniqueMissed) {
           const t = topicMap.get(tid);
           const est = t?.estimatedTime || 1;
+          // Check if already planned on any future day
+          const alreadyPlanned = futureLoads.some(f => f.planned.includes(tid));
+          if (alreadyPlanned) continue;
           // Find the least loaded future day
           futureLoads.sort((a, b) => a.hours - b.hours);
           const target = futureLoads[0];
-          if (target && !target.planned.includes(tid)) {
+          if (target) {
             target.planned.push(tid);
             target.hours += est;
           }
         }
 
-        // Build updated plans
+        // Build updated plans — only modify future days, leave past days intact
         const futureMap = new Map(futureLoads.map(f => [f.date, f.planned]));
         const updatedPlans = dailyPlans.map(p => {
-          if (p.date < today) {
-            // Remove missed from past days (keep only completed)
-            return { ...p, topicsPlanned: p.topicsPlanned.filter(id => p.topicsCompleted.includes(id)) };
-          }
           const newPlanned = futureMap.get(p.date);
           if (newPlanned) {
             return { ...p, topicsPlanned: newPlanned };
