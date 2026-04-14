@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Topic, DailyPlan, RevisionEntry, Status, Priority, Difficulty } from './types';
-import { format, addDays, parseISO, differenceInCalendarDays, isAfter } from 'date-fns';
+import { format, addDays, parseISO, differenceInCalendarDays, isAfter, isBefore, startOfDay, isToday } from 'date-fns';
 
 const START_DATE = '2025-04-13';
 const EXAM_DATE = '2025-05-05';
@@ -36,6 +36,7 @@ interface AppState {
   updateDailyPlan: (date: string, field: keyof DailyPlan, value: any) => void;
   initDailyPlans: () => void;
   autoDistribute: () => void;
+  redistributeBacklog: () => void;
 
   markTopicDone: (topicId: string) => void;
   toggleFocusMode: () => void;
@@ -165,31 +166,25 @@ export const useStore = create<AppState>()(
         const { topics } = get();
         const dates = generateDates();
         const coverageDays = Math.min(16, dates.length);
-        const revisionDays = dates.length - coverageDays;
 
         const notDone = topics.filter(t => t.status !== 'Done');
 
-        // Extract unit number for priority sorting
         const unitNum = (t: Topic) => {
           const m = t.unit.match(/(\d+)/);
           return m ? parseInt(m[1]) : 0;
         };
 
-        // Prioritize second half (units 3,4,5) first since first half was in midsem
-        // Within same half, sort by difficulty (Hard first)
         const sorted = [...notDone].sort((a, b) => {
           const aUnit = unitNum(a);
           const bUnit = unitNum(b);
-          const aIsSecondHalf = aUnit >= 3 ? 0 : 1; // 0 = second half (priority), 1 = first half
+          const aIsSecondHalf = aUnit >= 3 ? 0 : 1;
           const bIsSecondHalf = bUnit >= 3 ? 0 : 1;
           if (aIsSecondHalf !== bIsSecondHalf) return aIsSecondHalf - bIsSecondHalf;
-          // Within same half, sort by unit number descending (later units first)
           if (aUnit !== bUnit) return bUnit - aUnit;
           const dOrder: Record<string, number> = { Hard: 0, Medium: 1, Easy: 2 };
           return (dOrder[a.difficulty] ?? 1) - (dOrder[b.difficulty] ?? 1);
         });
 
-        // Interleave across courses so each day covers multiple subjects
         const courses = [...new Set(sorted.map(t => t.course))];
         const courseQueues = new Map(courses.map(c => [c, sorted.filter(t => t.course === c)]));
         const interleaved: Topic[] = [];
@@ -226,7 +221,6 @@ export const useStore = create<AppState>()(
           plans[dayIdx].targetHours = Math.max(hoursUsed, 8);
         }
 
-        // Distribute remaining topics if any
         while (topicIdx < interleaved.length) {
           for (let dayIdx = 0; dayIdx < coverageDays && topicIdx < interleaved.length; dayIdx++) {
             plans[dayIdx].topicsPlanned.push(interleaved[topicIdx].id);
@@ -234,8 +228,8 @@ export const useStore = create<AppState>()(
           }
         }
 
-        // Revision days: mark for revision
         const doneTopics = topics.filter(t => t.status === 'Done');
+        const revisionDays = dates.length - coverageDays;
         for (let dayIdx = coverageDays; dayIdx < dates.length; dayIdx++) {
           const revIdx = dayIdx - coverageDays;
           const chunk = Math.ceil(doneTopics.length / revisionDays);
@@ -245,6 +239,69 @@ export const useStore = create<AppState>()(
         }
 
         set({ dailyPlans: plans });
+      },
+
+      // Redistribute missed/incomplete topics from past days to future days
+      redistributeBacklog: () => {
+        const { dailyPlans, topics } = get();
+        const today = format(new Date(), 'yyyy-MM-dd');
+        const topicMap = new Map(topics.map(t => [t.id, t]));
+
+        // Collect all missed topic IDs from past days
+        const missedTopicIds: string[] = [];
+        for (const plan of dailyPlans) {
+          if (plan.date >= today) break;
+          for (const id of plan.topicsPlanned) {
+            if (!plan.topicsCompleted.includes(id)) {
+              const t = topicMap.get(id);
+              if (t && t.status !== 'Done') {
+                missedTopicIds.push(id);
+              }
+            }
+          }
+        }
+
+        if (missedTopicIds.length === 0) return;
+
+        // Remove missed topics from past plans, distribute to future days
+        const futurePlans = dailyPlans.filter(p => p.date >= today);
+        const maxHoursPerDay = 10;
+
+        // Calculate current load per future day
+        const futureLoads = futurePlans.map(p => {
+          const hours = p.topicsPlanned.reduce((s, id) => s + (topicMap.get(id)?.estimatedTime || 1), 0);
+          return { date: p.date, hours, planned: [...p.topicsPlanned] };
+        });
+
+        // Distribute missed topics to future days (least loaded first)
+        const uniqueMissed = [...new Set(missedTopicIds)];
+        for (const tid of uniqueMissed) {
+          const t = topicMap.get(tid);
+          const est = t?.estimatedTime || 1;
+          // Find the least loaded future day
+          futureLoads.sort((a, b) => a.hours - b.hours);
+          const target = futureLoads[0];
+          if (target && !target.planned.includes(tid)) {
+            target.planned.push(tid);
+            target.hours += est;
+          }
+        }
+
+        // Build updated plans
+        const futureMap = new Map(futureLoads.map(f => [f.date, f.planned]));
+        const updatedPlans = dailyPlans.map(p => {
+          if (p.date < today) {
+            // Remove missed from past days (keep only completed)
+            return { ...p, topicsPlanned: p.topicsPlanned.filter(id => p.topicsCompleted.includes(id)) };
+          }
+          const newPlanned = futureMap.get(p.date);
+          if (newPlanned) {
+            return { ...p, topicsPlanned: newPlanned };
+          }
+          return p;
+        });
+
+        set({ dailyPlans: updatedPlans });
       },
 
       updateDailyPlan: (date, field, value) => set(state => ({

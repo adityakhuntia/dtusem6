@@ -1,18 +1,27 @@
 import { useStore } from '@/store/useStore';
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns';
-import { ChevronDown, ChevronRight, Check } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronDown, ChevronRight, Check, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
 
 export default function DailyPlanner() {
-  const { dailyPlans, topics, updateDailyPlan, focusMode, markTopicDone } = useStore();
+  const { dailyPlans, topics, updateDailyPlan, focusMode, markTopicDone, redistributeBacklog } = useStore();
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
   const topicMap = new Map(topics.map(t => [t.id, t]));
   const today = startOfDay(new Date());
+  const todayStr = format(today, 'yyyy-MM-dd');
 
+  // In focus mode, show only today
   const plans = focusMode
     ? dailyPlans.filter(p => isToday(parseISO(p.date)))
     : dailyPlans;
+
+  // Auto-expand today in focus mode
+  useEffect(() => {
+    if (focusMode) {
+      setExpandedDay(todayStr);
+    }
+  }, [focusMode, todayStr]);
 
   const toggleExpand = (date: string) => {
     setExpandedDay(prev => prev === date ? null : date);
@@ -36,8 +45,17 @@ export default function DailyPlanner() {
         <h2 className="text-lg font-semibold text-foreground">
           Daily Planner {focusMode && <span className="text-xs font-normal text-primary ml-2">Focus Mode</span>}
         </h2>
-        <div className="text-xs text-muted-foreground">
-          {topics.length} topics across {dailyPlans.length} days
+        <div className="flex items-center gap-2">
+          <button
+            onClick={redistributeBacklog}
+            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground hover:opacity-90 transition"
+            title="Move missed topics from past days to future days"
+          >
+            <RefreshCw size={12} /> Redistribute Backlog
+          </button>
+          <div className="text-xs text-muted-foreground">
+            {topics.length} topics across {dailyPlans.length} days
+          </div>
         </div>
       </div>
 
@@ -60,7 +78,6 @@ export default function DailyPlanner() {
           const isPast = isBefore(dateObj, today) && !isTodayDate;
           const isExpanded = expandedDay === p.date || (focusMode && isTodayDate);
 
-          // Group planned topics by course
           const topicsByCourse: Record<string, typeof topics> = {};
           p.topicsPlanned.forEach(id => {
             const t = topicMap.get(id);
@@ -77,7 +94,6 @@ export default function DailyPlanner() {
 
           return (
             <div key={p.date} className={`bg-card border rounded-lg overflow-hidden ${isTodayDate ? 'ring-2 ring-primary' : ''}`}>
-              {/* Day header row */}
               <button
                 onClick={() => toggleExpand(p.date)}
                 className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition text-left"
@@ -100,7 +116,6 @@ export default function DailyPlanner() {
                     </span>
                   )}
                 </div>
-                {/* Mini progress bar */}
                 <div className="w-24 h-1.5 bg-muted rounded-full overflow-hidden flex-shrink-0">
                   <div className="h-full bg-[hsl(var(--status-done))] rounded-full transition-all" style={{ width: `${planned > 0 ? (completed / planned * 100) : 0}%` }} />
                 </div>
@@ -121,7 +136,6 @@ export default function DailyPlanner() {
                 )}
               </button>
 
-              {/* Expanded topic list */}
               {isExpanded && (
                 <div className="border-t px-4 py-3 space-y-3">
                   {Object.keys(topicsByCourse).length === 0 && (
