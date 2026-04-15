@@ -241,66 +241,72 @@ export const useStore = create<AppState>()(
         set({ dailyPlans: plans });
       },
 
-      // Redistribute missed/incomplete topics from past days to future days
+      // Redistribute missed/incomplete topics from each day into later days in the plan
       redistributeBacklog: () => {
         const { dailyPlans, topics } = get();
-        const today = format(new Date(), 'yyyy-MM-dd');
+        if (dailyPlans.length < 2) return;
+
         const topicMap = new Map(topics.map(t => [t.id, t]));
+        const getPlannedHours = (topicIds: string[]) =>
+          topicIds.reduce((sum, id) => sum + (topicMap.get(id)?.estimatedTime || 1), 0);
 
-        // Collect all missed topic IDs from past days
-        const missedTopicIds: string[] = [];
-        for (const plan of dailyPlans) {
-          if (plan.date >= today) break;
-          for (const id of plan.topicsPlanned) {
-            if (!plan.topicsCompleted.includes(id)) {
-              const t = topicMap.get(id);
-              if (t && t.status !== 'Done') {
-                missedTopicIds.push(id);
-              }
-            }
+        const sortedPlans = [...dailyPlans].sort((a, b) => a.date.localeCompare(b.date));
+        const updatedPlans = sortedPlans.map(plan => ({
+          ...plan,
+          topicsPlanned: [...plan.topicsPlanned],
+          topicsCompleted: [...plan.topicsCompleted],
+        }));
+
+        const futureLoads = updatedPlans.map(plan => ({
+          hours: getPlannedHours(plan.topicsPlanned),
+          plannedIds: new Set(plan.topicsPlanned),
+        }));
+
+        let movedAny = false;
+
+        for (let sourceIndex = 0; sourceIndex < sortedPlans.length - 1; sourceIndex++) {
+          const sourcePlan = sortedPlans[sourceIndex];
+          const missedTopicIds = [...new Set(
+            sourcePlan.topicsPlanned.filter(id => {
+              if (sourcePlan.topicsCompleted.includes(id)) return false;
+              const topic = topicMap.get(id);
+              return !!topic && topic.status !== 'Done';
+            })
+          )];
+
+          for (const topicId of missedTopicIds) {
+            const estimatedTime = topicMap.get(topicId)?.estimatedTime || 1;
+            const targetIndex = futureLoads
+              .map((load, index) => ({ ...load, index }))
+              .filter(load => load.index > sourceIndex && !load.plannedIds.has(topicId))
+              .sort((a, b) => a.hours - b.hours || a.index - b.index)[0]?.index;
+
+            if (targetIndex === undefined) continue;
+
+            updatedPlans[targetIndex].topicsPlanned.push(topicId);
+            futureLoads[targetIndex].plannedIds.add(topicId);
+            futureLoads[targetIndex].hours += estimatedTime;
+            movedAny = true;
           }
         }
 
-        if (missedTopicIds.length === 0) return;
+        if (!movedAny) return;
 
-        // Only redistribute if there are future days available
-        const futurePlans = dailyPlans.filter(p => p.date >= today);
-        if (futurePlans.length === 0) return;
+        const plansByDate = new Map(
+          updatedPlans.map(plan => [
+            plan.date,
+            {
+              ...plan,
+              targetHours: plan.topicsPlanned.length > 0
+                ? Math.max(plan.targetHours, getPlannedHours(plan.topicsPlanned))
+                : plan.targetHours,
+            },
+          ])
+        );
 
-        // Calculate current load per future day (preserve existing topics)
-        const futureLoads = futurePlans.map(p => {
-          const hours = p.topicsPlanned.reduce((s, id) => s + (topicMap.get(id)?.estimatedTime || 1), 0);
-          return { date: p.date, hours, planned: [...p.topicsPlanned] };
+        set({
+          dailyPlans: dailyPlans.map(plan => plansByDate.get(plan.date) || plan),
         });
-
-        // Distribute missed topics to future days (least loaded first)
-        const uniqueMissed = [...new Set(missedTopicIds)];
-        for (const tid of uniqueMissed) {
-          const t = topicMap.get(tid);
-          const est = t?.estimatedTime || 1;
-          // Check if already planned on any future day
-          const alreadyPlanned = futureLoads.some(f => f.planned.includes(tid));
-          if (alreadyPlanned) continue;
-          // Find the least loaded future day
-          futureLoads.sort((a, b) => a.hours - b.hours);
-          const target = futureLoads[0];
-          if (target) {
-            target.planned.push(tid);
-            target.hours += est;
-          }
-        }
-
-        // Build updated plans — only modify future days, leave past days intact
-        const futureMap = new Map(futureLoads.map(f => [f.date, f.planned]));
-        const updatedPlans = dailyPlans.map(p => {
-          const newPlanned = futureMap.get(p.date);
-          if (newPlanned) {
-            return { ...p, topicsPlanned: newPlanned };
-          }
-          return p;
-        });
-
-        set({ dailyPlans: updatedPlans });
       },
 
       updateDailyPlan: (date, field, value) => set(state => ({
