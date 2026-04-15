@@ -3,17 +3,44 @@ import { persist } from 'zustand/middleware';
 import { Topic, DailyPlan, RevisionEntry, Status, Priority, Difficulty } from './types';
 import { format, addDays, parseISO, isAfter, startOfDay } from 'date-fns';
 
-const START_DATE = '2025-04-13';
-const EXAM_DATE = '2025-05-05';
+const EXAM_MONTH = 4; // May (0-indexed)
+const EXAM_DAY = 5;
+const START_MONTH = 3; // April (0-indexed)
+const START_DAY = 13;
+
+function getScheduleBounds() {
+  const now = startOfDay(new Date());
+  const year = now.getFullYear();
+  const currentCycleStart = startOfDay(new Date(year, START_MONTH, START_DAY));
+  const currentCycleExam = startOfDay(new Date(year, EXAM_MONTH, EXAM_DAY));
+
+  // If the current cycle is over, prepare next year's window.
+  if (isAfter(now, currentCycleExam)) {
+    return {
+      startDate: format(startOfDay(new Date(year + 1, START_MONTH, START_DAY)), 'yyyy-MM-dd'),
+      examDate: format(startOfDay(new Date(year + 1, EXAM_MONTH, EXAM_DAY)), 'yyyy-MM-dd'),
+    };
+  }
+
+  // Before or during the cycle, always use the current year's exam window.
+  // This ensures Apr 13/14 backlog can be redistributed into future dates
+  // such as Apr 29 through May 5 in the active cycle.
+  return {
+    startDate: format(currentCycleStart, 'yyyy-MM-dd'),
+    examDate: format(currentCycleExam, 'yyyy-MM-dd'),
+  };
+}
+
 
 function generateId() {
   return Math.random().toString(36).slice(2, 11);
 }
 
 function generateDates(): string[] {
+  const { startDate, examDate } = getScheduleBounds();
   const dates: string[] = [];
-  let current = parseISO(START_DATE);
-  const end = parseISO(EXAM_DATE);
+  let current = parseISO(startDate);
+  const end = parseISO(examDate);
   while (!isAfter(current, end)) {
     dates.push(format(current, 'yyyy-MM-dd'));
     current = addDays(current, 1);
