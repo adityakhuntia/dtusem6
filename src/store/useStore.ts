@@ -241,7 +241,7 @@ export const useStore = create<AppState>()(
         set({ dailyPlans: plans });
       },
 
-      // Redistribute missed/incomplete topics from each day into later days in the plan
+      // Redistribute missed/incomplete topics from past days (before today) into future days (after today)
       redistributeBacklog: () => {
         const { dailyPlans, topics } = get();
         if (dailyPlans.length < 2) return;
@@ -250,83 +250,94 @@ export const useStore = create<AppState>()(
         const getPlannedHours = (topicIds: string[]) =>
           topicIds.reduce((sum, id) => sum + (topicMap.get(id)?.estimatedTime || 1), 0);
 
-        const sortedPlans = [...dailyPlans].sort((a, b) => a.date.localeCompare(b.date));
         const today = format(startOfDay(new Date()), 'yyyy-MM-dd');
-        const firstFutureIndex = sortedPlans.findIndex(plan => plan.date >= today);
-        const redistributionStartIndex = firstFutureIndex === -1
-          ? sortedPlans.findIndex(plan => plan.topicsPlanned.some(id => !plan.topicsCompleted.includes(id)))
-          : firstFutureIndex;
+        const sortedPlans = [...dailyPlans].sort((a, b) => a.date.localeCompare(b.date));
 
-        if (redistributionStartIndex <= 0) return;
+        // Past = strictly before today; Future = strictly after today; Today is untouched
+        const pastPlans = sortedPlans.filter(p => p.date < today);
+        const futurePlans = sortedPlans.filter(p => p.date > today);
 
+        if (pastPlans.length === 0 || futurePlans.length === 0) return;
+
+        // Deep clone all plans for mutation
         const updatedPlans = sortedPlans.map(plan => ({
           ...plan,
           topicsPlanned: [...plan.topicsPlanned],
           topicsCompleted: [...plan.topicsCompleted],
         }));
+        const updatedMap = new Map(updatedPlans.map(p => [p.date, p]));
 
-        const futureLoads = updatedPlans.map(plan => ({
-          hours: getPlannedHours(plan.topicsPlanned),
-          plannedIds: new Set(plan.topicsPlanned),
-        }));
-
+        // 1. Collect backlog from all past dates
         const backlogTopicIds: string[] = [];
-
-        for (let planIndex = 0; planIndex < redistributionStartIndex; planIndex++) {
-          const plan = updatedPlans[planIndex];
-          const missedTopicIds = plan.topicsPlanned.filter(id => {
+        for (const pastPlan of pastPlans) {
+          const plan = updatedMap.get(pastPlan.date)!;
+          const missedIds = plan.topicsPlanned.filter(id => {
             if (plan.topicsCompleted.includes(id)) return false;
             const topic = topicMap.get(id);
             return !!topic && topic.status !== 'Done';
           });
-
-          if (missedTopicIds.length === 0) continue;
-
-          backlogTopicIds.push(...missedTopicIds);
-          plan.topicsPlanned = plan.topicsPlanned.filter(id => !missedTopicIds.includes(id));
-          futureLoads[planIndex] = {
-            hours: getPlannedHours(plan.topicsPlanned),
-            plannedIds: new Set(plan.topicsPlanned),
-          };
+          if (missedIds.length === 0) continue;
+          backlogTopicIds.push(...missedIds);
+          // Remove missed topics from past day's plan
+          plan.topicsPlanned = plan.topicsPlanned.filter(id => !missedIds.includes(id));
         }
 
-        if (backlogTopicIds.length === 0) return;
+        const uniqueBacklog = [...new Set(backlogTopicIds)];
+        if (uniqueBacklog.length === 0) return;
 
+        // 2. Build load tracker for future days only
+        const futureDates = futurePlans.map(p => p.date);
+        const futureLoads = new Map(
+          futureDates.map(date => {
+            const plan = updatedMap.get(date)!;
+            return [date, {
+              hours: getPlannedHours(plan.topicsPlanned),
+              plannedIds: new Set(plan.topicsPlanned),
+            }];
+          })
+        );
+
+        // 3. Distribute backlog evenly across future days using least-loaded-first
         let movedAny = false;
-        const uniqueBacklogTopicIds = [...new Set(backlogTopicIds)];
-
-        for (const topicId of uniqueBacklogTopicIds) {
+        for (const topicId of uniqueBacklog) {
           const estimatedTime = topicMap.get(topicId)?.estimatedTime || 1;
-          const targetIndex = futureLoads
-            .map((load, index) => ({ ...load, index }))
-            .filter(load => load.index >= redistributionStartIndex && !load.plannedIds.has(topicId))
-            .sort((a, b) => a.hours - b.hours || a.index - b.index)[0]?.index;
 
-          if (targetIndex === undefined) continue;
+          // Find least-loaded future day that doesn't already have this topic
+          let bestDate: string | null = null;
+          let bestHours = Infinity;
+          for (const date of futureDates) {
+            const load = futureLoads.get(date)!;
+            if (!load.plannedIds.has(topicId) && load.hours < bestHours) {
+              bestHours = load.hours;
+              bestDate = date;
+            }
+          }
 
-          updatedPlans[targetIndex].topicsPlanned.push(topicId);
-          futureLoads[targetIndex].plannedIds.add(topicId);
-          futureLoads[targetIndex].hours += estimatedTime;
+          if (!bestDate) continue;
+
+          const plan = updatedMap.get(bestDate)!;
+          plan.topicsPlanned.push(topicId);
+          const load = futureLoads.get(bestDate)!;
+          load.plannedIds.add(topicId);
+          load.hours += estimatedTime;
           movedAny = true;
         }
 
         if (!movedAny) return;
 
-        const plansByDate = new Map(
-          updatedPlans.map(plan => [
-            plan.date,
-            {
-              ...plan,
-              targetHours: plan.topicsPlanned.length > 0
-                ? Math.max(plan.targetHours, getPlannedHours(plan.topicsPlanned))
-                : plan.targetHours,
-            },
-          ])
-        );
-
-        set({
-          dailyPlans: dailyPlans.map(plan => plansByDate.get(plan.date) || plan),
+        // 4. Update target hours and persist
+        const finalPlans = dailyPlans.map(original => {
+          const updated = updatedMap.get(original.date);
+          if (!updated) return original;
+          return {
+            ...updated,
+            targetHours: updated.topicsPlanned.length > 0
+              ? Math.max(updated.targetHours, getPlannedHours(updated.topicsPlanned))
+              : updated.targetHours,
+          };
         });
+
+        set({ dailyPlans: finalPlans });
       },
 
       updateDailyPlan: (date, field, value) => set(state => ({
