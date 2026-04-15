@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Topic, DailyPlan, RevisionEntry, Status, Priority, Difficulty } from './types';
-import { format, addDays, parseISO, differenceInCalendarDays, isAfter, isBefore, startOfDay, isToday } from 'date-fns';
+import { format, addDays, parseISO, isAfter, startOfDay } from 'date-fns';
 
 const START_DATE = '2025-04-13';
 const EXAM_DATE = '2025-05-05';
@@ -251,6 +251,14 @@ export const useStore = create<AppState>()(
           topicIds.reduce((sum, id) => sum + (topicMap.get(id)?.estimatedTime || 1), 0);
 
         const sortedPlans = [...dailyPlans].sort((a, b) => a.date.localeCompare(b.date));
+        const today = format(startOfDay(new Date()), 'yyyy-MM-dd');
+        const firstFutureIndex = sortedPlans.findIndex(plan => plan.date >= today);
+        const redistributionStartIndex = firstFutureIndex === -1
+          ? sortedPlans.findIndex(plan => plan.topicsPlanned.some(id => !plan.topicsCompleted.includes(id)))
+          : firstFutureIndex;
+
+        if (redistributionStartIndex <= 0) return;
+
         const updatedPlans = sortedPlans.map(plan => ({
           ...plan,
           topicsPlanned: [...plan.topicsPlanned],
@@ -262,32 +270,44 @@ export const useStore = create<AppState>()(
           plannedIds: new Set(plan.topicsPlanned),
         }));
 
+        const backlogTopicIds: string[] = [];
+
+        for (let planIndex = 0; planIndex < redistributionStartIndex; planIndex++) {
+          const plan = updatedPlans[planIndex];
+          const missedTopicIds = plan.topicsPlanned.filter(id => {
+            if (plan.topicsCompleted.includes(id)) return false;
+            const topic = topicMap.get(id);
+            return !!topic && topic.status !== 'Done';
+          });
+
+          if (missedTopicIds.length === 0) continue;
+
+          backlogTopicIds.push(...missedTopicIds);
+          plan.topicsPlanned = plan.topicsPlanned.filter(id => !missedTopicIds.includes(id));
+          futureLoads[planIndex] = {
+            hours: getPlannedHours(plan.topicsPlanned),
+            plannedIds: new Set(plan.topicsPlanned),
+          };
+        }
+
+        if (backlogTopicIds.length === 0) return;
+
         let movedAny = false;
+        const uniqueBacklogTopicIds = [...new Set(backlogTopicIds)];
 
-        for (let sourceIndex = 0; sourceIndex < sortedPlans.length - 1; sourceIndex++) {
-          const sourcePlan = sortedPlans[sourceIndex];
-          const missedTopicIds = [...new Set(
-            sourcePlan.topicsPlanned.filter(id => {
-              if (sourcePlan.topicsCompleted.includes(id)) return false;
-              const topic = topicMap.get(id);
-              return !!topic && topic.status !== 'Done';
-            })
-          )];
+        for (const topicId of uniqueBacklogTopicIds) {
+          const estimatedTime = topicMap.get(topicId)?.estimatedTime || 1;
+          const targetIndex = futureLoads
+            .map((load, index) => ({ ...load, index }))
+            .filter(load => load.index >= redistributionStartIndex && !load.plannedIds.has(topicId))
+            .sort((a, b) => a.hours - b.hours || a.index - b.index)[0]?.index;
 
-          for (const topicId of missedTopicIds) {
-            const estimatedTime = topicMap.get(topicId)?.estimatedTime || 1;
-            const targetIndex = futureLoads
-              .map((load, index) => ({ ...load, index }))
-              .filter(load => load.index > sourceIndex && !load.plannedIds.has(topicId))
-              .sort((a, b) => a.hours - b.hours || a.index - b.index)[0]?.index;
+          if (targetIndex === undefined) continue;
 
-            if (targetIndex === undefined) continue;
-
-            updatedPlans[targetIndex].topicsPlanned.push(topicId);
-            futureLoads[targetIndex].plannedIds.add(topicId);
-            futureLoads[targetIndex].hours += estimatedTime;
-            movedAny = true;
-          }
+          updatedPlans[targetIndex].topicsPlanned.push(topicId);
+          futureLoads[targetIndex].plannedIds.add(topicId);
+          futureLoads[targetIndex].hours += estimatedTime;
+          movedAny = true;
         }
 
         if (!movedAny) return;
