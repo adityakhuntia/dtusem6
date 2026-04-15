@@ -2,6 +2,7 @@ import { useStore } from '@/store/useStore';
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns';
 import { ChevronDown, ChevronRight, Check, RefreshCw } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { toast } from '@/components/ui/use-toast';
 
 export default function DailyPlanner() {
   const { dailyPlans, topics, updateDailyPlan, focusMode, markTopicDone, redistributeBacklog } = useStore();
@@ -10,6 +11,16 @@ export default function DailyPlanner() {
   const topicMap = new Map(topics.map(t => [t.id, t]));
   const today = startOfDay(new Date());
   const todayStr = format(today, 'yyyy-MM-dd');
+  const hasFutureDays = dailyPlans.some(plan => plan.date > todayStr);
+  const hasPastIncompleteTopics = dailyPlans.some(plan =>
+    plan.date < todayStr &&
+    plan.topicsPlanned.some(id => {
+      if (plan.topicsCompleted.includes(id)) return false;
+      const topic = topicMap.get(id);
+      return !!topic && topic.status !== 'Done';
+    })
+  );
+  const canRedistributeBacklog = hasFutureDays && hasPastIncompleteTopics;
 
   // In focus mode, show only today
   const plans = focusMode
@@ -27,6 +38,30 @@ export default function DailyPlanner() {
     setExpandedDay(prev => prev === date ? null : date);
   };
 
+  const handleRedistributeBacklog = () => {
+    if (!hasFutureDays) {
+      toast({
+        title: 'No future days available',
+        description: 'Backlog can only be moved into dates after today.',
+      });
+      return;
+    }
+
+    if (!hasPastIncompleteTopics) {
+      toast({
+        title: 'No backlog to redistribute',
+        description: 'There are no incomplete topics on past dates.',
+      });
+      return;
+    }
+
+    redistributeBacklog();
+    toast({
+      title: 'Backlog redistributed',
+      description: 'Incomplete topics from past dates were moved into future dates.',
+    });
+  };
+
   const toggleTopicComplete = (date: string, topicId: string) => {
     const plan = dailyPlans.find(p => p.date === date);
     if (!plan) return;
@@ -41,15 +76,22 @@ export default function DailyPlanner() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-foreground">
           Daily Planner {focusMode && <span className="text-xs font-normal text-primary ml-2">Focus Mode</span>}
         </h2>
         <div className="flex items-center gap-2">
           <button
-            onClick={redistributeBacklog}
-            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground hover:opacity-90 transition"
-            title="Move missed topics from past days to future days"
+            onClick={handleRedistributeBacklog}
+            disabled={!canRedistributeBacklog}
+            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground transition enabled:hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
+            title={
+              canRedistributeBacklog
+                ? 'Move missed topics from past days to future days'
+                : !hasFutureDays
+                  ? 'No future dates available for redistribution'
+                  : 'No incomplete topics on past dates'
+            }
           >
             <RefreshCw size={12} /> Redistribute Backlog
           </button>
