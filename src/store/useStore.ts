@@ -2,32 +2,28 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Topic, DailyPlan, RevisionEntry, Status, Priority, Difficulty } from './types';
 import { format, addDays, parseISO, isAfter, startOfDay } from 'date-fns';
-
-const EXAM_MONTH = 4; // May (0-indexed)
-const EXAM_DAY = 5;
-const START_MONTH = 3; // April (0-indexed)
-const START_DAY = 13;
+import { DATESHEET, FIRST_EXAM_DATE, LAST_EXAM_DATE, matchExamForCourse } from '@/data/datesheet';
 
 function getScheduleBounds() {
   const now = startOfDay(new Date());
-  const year = now.getFullYear();
-  const currentCycleStart = startOfDay(new Date(year, START_MONTH, START_DAY));
-  const currentCycleExam = startOfDay(new Date(year, EXAM_MONTH, EXAM_DAY));
+  const lastExam = parseISO(LAST_EXAM_DATE);
+  // Start = today (or first exam date if today is before any planning makes sense), end = last exam.
+  // We use today as start so the planner only ever shows actionable days going forward.
+  const start = now < parseISO(FIRST_EXAM_DATE)
+    ? now // start planning from today even if it's before the first exam
+    : now;
 
-  // If the current cycle is over, prepare next year's window.
-  if (isAfter(now, currentCycleExam)) {
+  // If the entire exam cycle is over, fall back to a 30-day forward window so the UI isn't empty.
+  if (isAfter(now, lastExam)) {
     return {
-      startDate: format(startOfDay(new Date(year + 1, START_MONTH, START_DAY)), 'yyyy-MM-dd'),
-      examDate: format(startOfDay(new Date(year + 1, EXAM_MONTH, EXAM_DAY)), 'yyyy-MM-dd'),
+      startDate: format(now, 'yyyy-MM-dd'),
+      examDate: format(addDays(now, 30), 'yyyy-MM-dd'),
     };
   }
 
-  // Before or during the cycle, always use the current year's exam window.
-  // This ensures Apr 13/14 backlog can be redistributed into future dates
-  // such as Apr 29 through May 5 in the active cycle.
   return {
-    startDate: format(currentCycleStart, 'yyyy-MM-dd'),
-    examDate: format(currentCycleExam, 'yyyy-MM-dd'),
+    startDate: format(start, 'yyyy-MM-dd'),
+    examDate: format(lastExam, 'yyyy-MM-dd'),
   };
 }
 
@@ -192,77 +188,112 @@ export const useStore = create<AppState>()(
       autoDistribute: () => {
         const { topics } = get();
         const dates = generateDates();
-        const coverageDays = Math.min(16, dates.length);
+        if (dates.length === 0) return;
 
-        const notDone = topics.filter(t => t.status !== 'Done');
+        const maxHoursPerDay = 9;
+        const today = format(startOfDay(new Date()), 'yyyy-MM-dd');
+
+        // Build empty plans for every date in the schedule window.
+        const plans: DailyPlan[] = dates.map(date => ({
+          date,
+          topicsPlanned: [],
+          topicsCompleted: [],
+          totalStudyHours: 0,
+          targetHours: 8,
+          recoveryPlan: '',
+        }));
+        const planMap = new Map(plans.map(p => [p.date, p]));
+        const dayHours = new Map<string, number>(dates.map(d => [d, 0]));
 
         const unitNum = (t: Topic) => {
           const m = t.unit.match(/(\d+)/);
           return m ? parseInt(m[1]) : 0;
         };
+        const difficultyOrder: Record<string, number> = { Hard: 0, Medium: 1, Easy: 2 };
 
-        const sorted = [...notDone].sort((a, b) => {
-          const aUnit = unitNum(a);
-          const bUnit = unitNum(b);
-          const aIsSecondHalf = aUnit >= 3 ? 0 : 1;
-          const bIsSecondHalf = bUnit >= 3 ? 0 : 1;
-          if (aIsSecondHalf !== bIsSecondHalf) return aIsSecondHalf - bIsSecondHalf;
-          if (aUnit !== bUnit) return bUnit - aUnit;
-          const dOrder: Record<string, number> = { Hard: 0, Medium: 1, Easy: 2 };
-          return (dOrder[a.difficulty] ?? 1) - (dOrder[b.difficulty] ?? 1);
-        });
+        // Group not-done topics by their matched exam (earliest exam first).
+        const sortedExams = [...DATESHEET].sort((a, b) => a.date.localeCompare(b.date));
+        const notDone = topics.filter(t => t.status !== 'Done');
 
-        const courses = [...new Set(sorted.map(t => t.course))];
-        const courseQueues = new Map(courses.map(c => [c, sorted.filter(t => t.course === c)]));
-        const interleaved: Topic[] = [];
-        let added = true;
-        while (added) {
-          added = false;
-          for (const c of courses) {
-            const q = courseQueues.get(c)!;
-            if (q.length > 0) {
-              interleaved.push(q.shift()!);
-              added = true;
+        // Topics whose course doesn't match any exam — schedule them last, across the whole window.
+        const unmatched: Topic[] = [];
+
+        // Track the day index pointer per exam so we round-robin within its window.
+        for (const exam of sortedExams) {
+          const examTopics = notDone.filter(t => {
+            const matched = matchExamForCourse(t.course);
+            return matched?.code === exam.code;
+          });
+          if (examTopics.length === 0) continue;
+
+          // Hardest + highest unit first within the course (so foundations get more revision time).
+          examTopics.sort((a, b) => {
+            const dDiff = (difficultyOrder[a.difficulty] ?? 1) - (difficultyOrder[b.difficulty] ?? 1);
+            if (dDiff !== 0) return dDiff;
+            return unitNum(b) - unitNum(a);
+          });
+
+          // Available study days for this exam: from today (inclusive) up to the day BEFORE the exam.
+          // Exam day itself is reserved as a light/no-study day.
+          const windowDays = dates.filter(d => d >= today && d < exam.date);
+          // If we're already past the exam, skip — user can't study for it anymore.
+          if (windowDays.length === 0) continue;
+
+          // Distribute by always picking the least-loaded day in this exam's window.
+          for (const topic of examTopics) {
+            const est = topic.estimatedTime || 1;
+            // Find least-loaded day with capacity.
+            let bestDay: string | null = null;
+            let bestHours = Infinity;
+            for (const d of windowDays) {
+              const h = dayHours.get(d)!;
+              if (h + est <= maxHoursPerDay && h < bestHours) {
+                bestHours = h;
+                bestDay = d;
+              }
+            }
+            // If no day has capacity, pick the absolute least-loaded day (overflow).
+            if (!bestDay) {
+              for (const d of windowDays) {
+                const h = dayHours.get(d)!;
+                if (h < bestHours) {
+                  bestHours = h;
+                  bestDay = d;
+                }
+              }
+            }
+            if (!bestDay) continue;
+            planMap.get(bestDay)!.topicsPlanned.push(topic.id);
+            dayHours.set(bestDay, (dayHours.get(bestDay) || 0) + est);
+          }
+        }
+
+        // Collect unmatched topics.
+        for (const t of notDone) {
+          if (!matchExamForCourse(t.course)) unmatched.push(t);
+        }
+        // Spread unmatched across all future days, least-loaded first.
+        const futureDays = dates.filter(d => d >= today);
+        for (const topic of unmatched) {
+          const est = topic.estimatedTime || 1;
+          let bestDay: string | null = null;
+          let bestHours = Infinity;
+          for (const d of futureDays) {
+            const h = dayHours.get(d)!;
+            if (h < bestHours) {
+              bestHours = h;
+              bestDay = d;
             }
           }
+          if (!bestDay) continue;
+          planMap.get(bestDay)!.topicsPlanned.push(topic.id);
+          dayHours.set(bestDay, (dayHours.get(bestDay) || 0) + est);
         }
 
-        const maxHoursPerDay = 9;
-        const plans = generateDates().map(date => ({
-          date,
-          topicsPlanned: [] as string[],
-          topicsCompleted: [] as string[],
-          totalStudyHours: 0,
-          targetHours: 8,
-          recoveryPlan: '',
-        }));
-
-        let topicIdx = 0;
-        for (let dayIdx = 0; dayIdx < coverageDays && topicIdx < interleaved.length; dayIdx++) {
-          let hoursUsed = 0;
-          while (topicIdx < interleaved.length && hoursUsed + interleaved[topicIdx].estimatedTime <= maxHoursPerDay) {
-            plans[dayIdx].topicsPlanned.push(interleaved[topicIdx].id);
-            hoursUsed += interleaved[topicIdx].estimatedTime;
-            topicIdx++;
-          }
-          plans[dayIdx].targetHours = Math.max(hoursUsed, 8);
-        }
-
-        while (topicIdx < interleaved.length) {
-          for (let dayIdx = 0; dayIdx < coverageDays && topicIdx < interleaved.length; dayIdx++) {
-            plans[dayIdx].topicsPlanned.push(interleaved[topicIdx].id);
-            topicIdx++;
-          }
-        }
-
-        const doneTopics = topics.filter(t => t.status === 'Done');
-        const revisionDays = dates.length - coverageDays;
-        for (let dayIdx = coverageDays; dayIdx < dates.length; dayIdx++) {
-          const revIdx = dayIdx - coverageDays;
-          const chunk = Math.ceil(doneTopics.length / revisionDays);
-          const start = revIdx * chunk;
-          plans[dayIdx].topicsPlanned = doneTopics.slice(start, start + chunk).map(t => t.id);
-          plans[dayIdx].targetHours = 8;
+        // Set targetHours per day to actual planned load (min 6 to keep a baseline goal).
+        for (const p of plans) {
+          const h = dayHours.get(p.date) || 0;
+          p.targetHours = h > 0 ? Math.max(6, Math.ceil(h)) : 6;
         }
 
         set({ dailyPlans: plans });

@@ -1,5 +1,6 @@
 import { useStore } from '@/store/useStore';
 import { differenceInCalendarDays, parseISO, format } from 'date-fns';
+import { FIRST_EXAM_DATE } from '@/data/datesheet';
 
 function ProgressBar({ value, max, label, color = 'bg-primary' }: { value: number; max: number; label: string; color?: string }) {
   const pct = max > 0 ? Math.round(value / max * 100) : 0;
@@ -36,7 +37,7 @@ export default function ProgressDashboard() {
     return topics.filter(t => t.course === course && t.unit === unit).every(t => t.status === 'Done');
   }).length;
 
-  const examDate = parseISO('2025-05-05');
+  const examDate = parseISO(FIRST_EXAM_DATE);
   const today = new Date();
   const daysLeft = Math.max(0, differenceInCalendarDays(examDate, today));
   const remaining = total - done;
