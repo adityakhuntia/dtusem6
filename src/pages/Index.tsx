@@ -7,6 +7,7 @@ import ProgressDashboard from '@/components/ProgressDashboard';
 import RevisionTracker from '@/components/RevisionTracker';
 import SyllabusImport from '@/components/SyllabusImport';
 import ExamCountdown from '@/components/ExamCountdown';
+import ExamSchedule from '@/components/ExamSchedule';
 import { BookOpen, Calendar, BarChart3, RotateCcw, Focus, List } from 'lucide-react';
 
 const tabs = [
@@ -66,6 +67,7 @@ export default function Index() {
 
       <main className="max-w-7xl mx-auto p-4 space-y-4">
         <ExamCountdown />
+        <ExamSchedule />
 
         {topics.length === 0 && <SyllabusImport />}
 
