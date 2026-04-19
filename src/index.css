@@ -36,6 +36,14 @@
     --overperform: 142 71% 45%;
     --underperform: 0 72% 51%;
 
+    /* Per-subject palette (used by ExamSchedule timeline) */
+    --subj-mms: 217 91% 60%;     /* blue */
+    --subj-dwdm: 271 81% 60%;    /* purple */
+    --subj-hu: 25 95% 55%;       /* orange */
+    --subj-bt: 142 71% 45%;      /* green */
+    --subj-qit: 188 86% 43%;     /* cyan */
+    --subj-fe: 340 82% 55%;      /* pink */
+
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
     --sidebar-primary: 240 5.9% 10%;

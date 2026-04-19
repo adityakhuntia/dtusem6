@@ -5,6 +5,7 @@ export interface ExamEntry {
   code: string;        // Short code shown in UI (e.g. "MMS")
   name: string;        // Full subject name
   date: string;        // ISO yyyy-MM-dd
+  colorVar: string;    // CSS variable name (without --) for the subject's color
   // Aliases / keywords used to match a topic's `course` string to this exam.
   // Matching is case-insensitive and uses substring checks.
   aliases: string[];
@@ -18,36 +19,42 @@ export const DATESHEET: ExamEntry[] = [
     code: 'MMS',
     name: 'Mathematical Modelling and Simulation',
     date: `${YEAR}-05-04`,
+    colorVar: 'subj-mms',
     aliases: ['mms', 'mathematical modelling', 'modelling and simulation', 'mathematical modeling'],
   },
   {
     code: 'DWDM',
     name: 'Data Warehousing & Data Mining',
     date: `${YEAR}-05-07`,
+    colorVar: 'subj-dwdm',
     aliases: ['dwdm', 'data warehousing', 'data mining', 'warehous'],
   },
   {
     code: 'HU',
     name: 'Engineering Economics',
     date: `${YEAR}-05-09`,
+    colorVar: 'subj-hu',
     aliases: ['hu', 'engg economics', 'engineering economics', 'economics'],
   },
   {
     code: 'BT',
     name: 'Genomics and Proteomics',
     date: `${YEAR}-05-13`,
+    colorVar: 'subj-bt',
     aliases: ['bt', 'genomics', 'proteomics', 'biotech'],
   },
   {
     code: 'QIT',
     name: 'Quantum Information Theory',
     date: `${YEAR}-05-14`,
+    colorVar: 'subj-qit',
     aliases: ['qit', 'quantum information', 'quantum'],
   },
   {
     code: 'FE',
     name: 'Financial Engineering',
     date: `${YEAR}-05-20`,
+    colorVar: 'subj-fe',
     aliases: ['fe', 'financial engineering', 'finance'],
   },
 ];
