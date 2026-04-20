@@ -62,6 +62,8 @@ interface AppState {
   redistributeBacklog: () => void;
 
   markTopicDone: (topicId: string) => void;
+  markTopicsForRevision: (topicIds: string[]) => number;
+  bulkMarkForRevisionByName: (items: { courseHint: string; topic: string }[]) => { matched: number; missed: { courseHint: string; topic: string }[] };
   toggleFocusMode: () => void;
 }
 
@@ -432,6 +434,83 @@ export const useStore = create<AppState>()(
             }];
           return { topics, revisions };
         });
+      },
+
+      markTopicsForRevision: (topicIds) => {
+        const today = format(new Date(), 'yyyy-MM-dd');
+        const idSet = new Set(topicIds);
+        let count = 0;
+        set(state => {
+          const topics = state.topics.map(t => {
+            if (!idSet.has(t.id)) return t;
+            count++;
+            return {
+              ...t,
+              status: 'Done' as Status,
+              lastRevisedDate: today,
+              revisionCount: Math.max(1, t.revisionCount),
+            };
+          });
+          // Build/update revision entries with the spaced-repetition schedule.
+          const existingByTopic = new Map(state.revisions.map(r => [r.topicId, r]));
+          const todayDate = parseISO(today);
+          for (const id of topicIds) {
+            const topic = topics.find(t => t.id === id);
+            if (!topic) continue;
+            existingByTopic.set(id, {
+              topicId: id,
+              topic: topic.topic,
+              course: topic.course,
+              lastStudied: today,
+              revision1: format(addDays(todayDate, 1), 'yyyy-MM-dd'),
+              revision2: format(addDays(todayDate, 3), 'yyyy-MM-dd'),
+              revision3: format(addDays(todayDate, 7), 'yyyy-MM-dd'),
+              revision1Done: false,
+              revision2Done: false,
+              revision3Done: false,
+            });
+          }
+          return { topics, revisions: Array.from(existingByTopic.values()) };
+        });
+        return count;
+      },
+
+      bulkMarkForRevisionByName: (items) => {
+        const { topics } = get();
+        const norm = (s: string) =>
+          s.toLowerCase()
+            .replace(/[^a-z0-9 ]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const matchedIds: string[] = [];
+        const missed: { courseHint: string; topic: string }[] = [];
+
+        for (const item of items) {
+          const topicNorm = norm(item.topic);
+          const courseHintNorm = norm(item.courseHint);
+          // Score each topic: must include topic name; bonus if course matches hint.
+          let bestId: string | null = null;
+          let bestScore = -1;
+          for (const t of topics) {
+            const tNorm = norm(t.topic);
+            if (!tNorm.includes(topicNorm) && !topicNorm.includes(tNorm)) continue;
+            const courseMatch = norm(t.course).includes(courseHintNorm) || courseHintNorm.includes(norm(t.course));
+            const score = (courseMatch ? 100 : 0) + Math.min(topicNorm.length, tNorm.length);
+            if (score > bestScore) {
+              bestScore = score;
+              bestId = t.id;
+            }
+          }
+          if (bestId && !matchedIds.includes(bestId)) {
+            matchedIds.push(bestId);
+          } else if (!bestId) {
+            missed.push(item);
+          }
+        }
+
+        const matched = get().markTopicsForRevision(matchedIds);
+        return { matched, missed };
       },
 
       toggleFocusMode: () => set(state => ({ focusMode: !state.focusMode })),

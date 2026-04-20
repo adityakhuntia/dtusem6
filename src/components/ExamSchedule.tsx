@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { DATESHEET, matchExamForCourse, ExamEntry, LAST_EXAM_DATE } from '@/data/datesheet';
 import {
@@ -11,7 +11,8 @@ import {
   isBefore,
   isSameDay,
 } from 'date-fns';
-import { CalendarRange } from 'lucide-react';
+import { CalendarRange, ChevronDown } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
 type DayKind = 'past' | 'exam' | 'study' | 'gap' | 'today';
 
@@ -113,60 +114,79 @@ export default function ExamSchedule() {
 
   const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+  const [open, setOpen] = useState(false);
+
+  // Summary for the collapsed header: next upcoming exam.
+  const today = startOfDay(new Date());
+  const upcoming = DATESHEET
+    .map(e => ({ exam: e, days: differenceInCalendarDays(parseISO(e.date), today) }))
+    .filter(x => x.days >= 0)
+    .sort((a, b) => a.days - b.days)[0];
+
   return (
-    <div className="bg-card border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <CalendarRange size={14} className="text-primary" />
+    <Collapsible open={open} onOpenChange={setOpen} className="bg-card border rounded-lg">
+      <CollapsibleTrigger className="w-full flex items-center gap-2 p-3 text-left hover:bg-muted/40 transition rounded-lg">
+        <CalendarRange size={14} className="text-primary shrink-0" />
         <h3 className="text-sm font-semibold text-foreground">Exam Schedule Map</h3>
-        <span className="text-[10px] text-muted-foreground ml-auto">
-          Color = subject being prepared
-        </span>
-      </div>
+        {upcoming && !open && (
+          <span className="text-[11px] text-muted-foreground truncate">
+            · Next:{' '}
+            <span className="font-semibold text-foreground">{upcoming.exam.code}</span>{' '}
+            in {upcoming.days}d ({format(parseISO(upcoming.exam.date), 'MMM d')})
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`ml-auto text-muted-foreground transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
+        />
+      </CollapsibleTrigger>
 
-      {/* Day-of-week header */}
-      <div className="grid grid-cols-7 gap-1 mb-1">
-        {dayLabels.map(d => (
-          <div key={d} className="text-[10px] text-muted-foreground text-center font-medium">
-            {d}
-          </div>
-        ))}
-      </div>
-
-      {/* Week rows */}
-      <div className="space-y-1">
-        {weeks.map((week, wi) => (
-          <div key={wi} className="grid grid-cols-7 gap-1">
-            {week.map(cell => (
-              <DayCellView key={cell.iso} cell={cell} />
-            ))}
-          </div>
-        ))}
-      </div>
-
-      {/* Legend */}
-      <div className="mt-4 pt-3 border-t flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
-          Subjects
+      <CollapsibleContent className="px-4 pb-4 pt-1">
+        {/* Day-of-week header */}
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {dayLabels.map(d => (
+            <div key={d} className="text-[10px] text-muted-foreground text-center font-medium">
+              {d}
+            </div>
+          ))}
         </div>
-        {DATESHEET.map(e => (
-          <div key={e.code} className="flex items-center gap-1.5">
-            <span
-              className="w-3 h-3 rounded-sm"
-              style={{ backgroundColor: `hsl(var(--${e.colorVar}))` }}
-            />
-            <span className="text-[11px] text-foreground font-medium">{e.code}</span>
-            <span className="text-[10px] text-muted-foreground">
-              ({format(parseISO(e.date), 'MMM d')})
-            </span>
-          </div>
-        ))}
-        <div className="flex items-center gap-3 ml-auto">
-          <LegendSwatch label="Exam day" type="exam" />
-          <LegendSwatch label="Gap" type="gap" />
-          <LegendSwatch label="Past" type="past" />
+
+        {/* Week rows */}
+        <div className="space-y-1">
+          {weeks.map((week, wi) => (
+            <div key={wi} className="grid grid-cols-7 gap-1">
+              {week.map(cell => (
+                <DayCellView key={cell.iso} cell={cell} />
+              ))}
+            </div>
+          ))}
         </div>
-      </div>
-    </div>
+
+        {/* Legend */}
+        <div className="mt-4 pt-3 border-t flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+            Subjects
+          </div>
+          {DATESHEET.map(e => (
+            <div key={e.code} className="flex items-center gap-1.5">
+              <span
+                className="w-3 h-3 rounded-sm"
+                style={{ backgroundColor: `hsl(var(--${e.colorVar}))` }}
+              />
+              <span className="text-[11px] text-foreground font-medium">{e.code}</span>
+              <span className="text-[10px] text-muted-foreground">
+                ({format(parseISO(e.date), 'MMM d')})
+              </span>
+            </div>
+          ))}
+          <div className="flex items-center gap-3 ml-auto">
+            <LegendSwatch label="Exam day" type="exam" />
+            <LegendSwatch label="Gap" type="gap" />
+            <LegendSwatch label="Past" type="past" />
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
