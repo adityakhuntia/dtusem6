@@ -62,6 +62,8 @@ interface AppState {
   redistributeBacklog: () => void;
 
   markTopicDone: (topicId: string) => void;
+  markTopicsForRevision: (topicIds: string[]) => number;
+  bulkMarkForRevisionByName: (items: { courseHint: string; topic: string }[]) => { matched: number; missed: { courseHint: string; topic: string }[] };
   toggleFocusMode: () => void;
 }
 
