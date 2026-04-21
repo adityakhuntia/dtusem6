@@ -1,7 +1,7 @@
 import { useStore } from '@/store/useStore';
 import { Topic, Status, Priority, Difficulty } from '@/store/types';
-import { useState, useCallback } from 'react';
-import { Trash2, Plus } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
+import { Trash2, Plus, Search, X } from 'lucide-react';
 
 const statuses: Status[] = ['Not Started', 'In Progress', 'Done'];
 const priorities: Priority[] = ['High', 'Medium', 'Low'];
