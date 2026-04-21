@@ -57,7 +57,32 @@ function SelectCell({ value, options, onChange }: { value: string; options: stri
 export default function MasterTracker() {
   const { topics, updateTopic, addTopic, deleteTopic, markTopicDone } = useStore();
 
-  const courses = [...new Set(topics.map(t => t.course))];
+  const [search, setSearch] = useState('');
+  const [fCourse, setFCourse] = useState<string>('all');
+  const [fUnit, setFUnit] = useState<string>('all');
+  const [fStatus, setFStatus] = useState<string>('all');
+  const [fPriority, setFPriority] = useState<string>('all');
+  const [fDifficulty, setFDifficulty] = useState<string>('all');
+
+  const courses = useMemo(() => [...new Set(topics.map(t => t.course))], [topics]);
+  const units = useMemo(
+    () => [...new Set(topics.filter(t => fCourse === 'all' || t.course === fCourse).map(t => t.unit))],
+    [topics, fCourse]
+  );
+
+  const filteredTopics = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return topics.filter(t => {
+      if (fCourse !== 'all' && t.course !== fCourse) return false;
+      if (fUnit !== 'all' && t.unit !== fUnit) return false;
+      if (fStatus !== 'all' && t.status !== fStatus) return false;
+      if (fPriority !== 'all' && t.priority !== fPriority) return false;
+      if (fDifficulty !== 'all' && t.difficulty !== fDifficulty) return false;
+      if (q && !(`${t.topic} ${t.unitTitle} ${t.notes}`.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [topics, search, fCourse, fUnit, fStatus, fPriority, fDifficulty]);
+
   const courseStats = courses.map(c => {
     const ct = topics.filter(t => t.course === c);
     const done = ct.filter(t => t.status === 'Done').length;
@@ -71,6 +96,21 @@ export default function MasterTracker() {
     updateTopic(id, 'status', val);
     if (val === 'Done') markTopicDone(id);
   }, [updateTopic, markTopicDone]);
+
+  const activeFilterCount =
+    (fCourse !== 'all' ? 1 : 0) +
+    (fUnit !== 'all' ? 1 : 0) +
+    (fStatus !== 'all' ? 1 : 0) +
+    (fPriority !== 'all' ? 1 : 0) +
+    (fDifficulty !== 'all' ? 1 : 0) +
+    (search ? 1 : 0);
+
+  const clearFilters = () => {
+    setSearch(''); setFCourse('all'); setFUnit('all');
+    setFStatus('all'); setFPriority('all'); setFDifficulty('all');
+  };
+
+  const filterSelectClass = "text-xs h-8 rounded-md border bg-background px-2 focus:outline-none focus:ring-1 focus:ring-ring";
 
   return (
     <div className="space-y-4">
@@ -87,14 +127,64 @@ export default function MasterTracker() {
       {/* Course stats */}
       <div className="flex flex-wrap gap-3">
         {courseStats.map(cs => (
-          <div key={cs.course} className="bg-card rounded-md px-3 py-2 text-xs border">
+          <button
+            key={cs.course}
+            onClick={() => setFCourse(fCourse === cs.course ? 'all' : cs.course)}
+            className={`bg-card rounded-md px-3 py-2 text-xs border text-left transition hover:border-primary ${fCourse === cs.course ? 'border-primary ring-1 ring-primary' : ''}`}
+          >
             <div className="font-medium truncate max-w-[200px]">{cs.course}</div>
             <div className="text-muted-foreground">{cs.done}/{cs.total} ({cs.pct}%)</div>
-          </div>
+          </button>
         ))}
         <div className="bg-card rounded-md px-3 py-2 text-xs border">
           <div className="font-medium">Time</div>
           <div className="text-muted-foreground">Est: {totalEst}h | Act: {totalAct}h</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-card border rounded-lg p-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search topic, unit, notes…"
+              className="w-full text-xs h-8 rounded-md border bg-background pl-7 pr-2 focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <select className={filterSelectClass} value={fCourse} onChange={e => { setFCourse(e.target.value); setFUnit('all'); }}>
+            <option value="all">All courses</option>
+            {courses.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select className={filterSelectClass} value={fUnit} onChange={e => setFUnit(e.target.value)}>
+            <option value="all">All units</option>
+            {units.map(u => <option key={u} value={u}>Unit {u}</option>)}
+          </select>
+          <select className={filterSelectClass} value={fStatus} onChange={e => setFStatus(e.target.value)}>
+            <option value="all">All statuses</option>
+            {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select className={filterSelectClass} value={fPriority} onChange={e => setFPriority(e.target.value)}>
+            <option value="all">All priorities</option>
+            {priorities.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select className={filterSelectClass} value={fDifficulty} onChange={e => setFDifficulty(e.target.value)}>
+            <option value="all">All difficulties</option>
+            {difficulties.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          {activeFilterCount > 0 && (
+            <button
+              onClick={clearFilters}
+              className="flex items-center gap-1 text-xs h-8 px-2 rounded-md border hover:bg-muted transition"
+            >
+              <X size={12} /> Clear ({activeFilterCount})
+            </button>
+          )}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Showing {filteredTopics.length} of {topics.length} topics
         </div>
       </div>
 
@@ -109,7 +199,7 @@ export default function MasterTracker() {
             </tr>
           </thead>
           <tbody>
-            {topics.map((t, i) => (
+            {filteredTopics.map((t, i) => (
               <tr key={t.id} className={`border-b border-border/50 hover:bg-muted/30 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
                 <td className="px-2 py-1 max-w-[150px]"><EditableCell value={t.course} onChange={v => updateTopic(t.id, 'course', v)} /></td>
                 <td className="px-2 py-1 w-16"><EditableCell value={t.unit} onChange={v => updateTopic(t.id, 'unit', v)} /></td>
@@ -138,6 +228,9 @@ export default function MasterTracker() {
         </table>
         {topics.length === 0 && (
           <div className="text-center py-12 text-muted-foreground text-sm">No topics yet. Import your syllabus or add rows manually.</div>
+        )}
+        {topics.length > 0 && filteredTopics.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground text-sm">No topics match the current filters.</div>
         )}
       </div>
     </div>
