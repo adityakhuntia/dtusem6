@@ -261,7 +261,7 @@ export default function MasterTracker() {
                 <td className="px-2 py-1 w-24 text-xs">{t.lastRevisedDate || '—'}</td>
                 <td className="px-2 py-1 max-w-[120px]"><EditableCell value={t.notes} onChange={v => updateTopic(t.id, 'notes', v)} /></td>
                 <td className="px-2 py-1">
-                  <button onClick={() => deleteTopic(t.id)} className="text-muted-foreground hover:text-destructive transition">
+                  <button onClick={() => handleDelete(t.id)} className="text-muted-foreground hover:text-destructive transition">
                     <Trash2 size={14} />
                   </button>
                 </td>
