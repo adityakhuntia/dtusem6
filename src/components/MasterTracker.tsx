@@ -1,7 +1,9 @@
 import { useStore } from '@/store/useStore';
 import { Topic, Status, Priority, Difficulty } from '@/store/types';
 import { useState, useCallback, useMemo } from 'react';
-import { Trash2, Plus, Search, X } from 'lucide-react';
+import { Trash2, Plus, Search, X, Undo2, RefreshCw } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { DEFAULT_SYLLABUS } from './SyllabusImport';
 
 const statuses: Status[] = ['Not Started', 'In Progress', 'Done'];
 const priorities: Priority[] = ['High', 'Medium', 'Low'];
