@@ -148,14 +148,23 @@ export default function MasterTracker() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-lg font-semibold text-foreground">Master Tracker</h2>
-        <button
-          onClick={() => addTopic({})}
-          className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition"
-        >
-          <Plus size={14} /> Add Row
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRestoreDefault}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground hover:opacity-90 transition"
+            title="Re-add any default-syllabus topics missing from your tracker. Previously-completed topics return as Done."
+          >
+            <RefreshCw size={14} /> Restore Default Syllabus
+          </button>
+          <button
+            onClick={() => addTopic({})}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition"
+          >
+            <Plus size={14} /> Add Row
+          </button>
+        </div>
       </div>
 
       {/* Course stats */}
