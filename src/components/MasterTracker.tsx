@@ -57,7 +57,39 @@ function SelectCell({ value, options, onChange }: { value: string; options: stri
 }
 
 export default function MasterTracker() {
-  const { topics, updateTopic, addTopic, deleteTopic, markTopicDone } = useStore();
+  const { topics, updateTopic, addTopic, deleteTopic, markTopicDone, undoDelete, restoreDefaultSyllabus } = useStore();
+  const { toast } = useToast();
+
+  const handleDelete = (id: string) => {
+    const topic = topics.find(t => t.id === id);
+    deleteTopic(id);
+    toast({
+      title: 'Topic deleted',
+      description: topic ? `"${topic.topic}" removed.` : 'Topic removed.',
+      action: (
+        <button
+          onClick={() => { const n = undoDelete(); if (n) toast({ title: 'Restored', description: `${n} topic restored.` }); }}
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90"
+        >
+          <Undo2 size={12} /> Undo
+        </button>
+      ),
+    });
+  };
+
+  const handleRestoreDefault = () => {
+    const { added, restoredDone } = restoreDefaultSyllabus(DEFAULT_SYLLABUS);
+    if (added === 0) {
+      toast({ title: 'Nothing to restore', description: 'All default topics are already in your tracker.' });
+    } else {
+      toast({
+        title: `Restored ${added} topic${added === 1 ? '' : 's'}`,
+        description: restoredDone > 0
+          ? `${restoredDone} marked as Done from previous revision history.`
+          : 'Added back as Not Started.',
+      });
+    }
+  };
 
   const [search, setSearch] = useState('');
   const [fCourse, setFCourse] = useState<string>('all');
