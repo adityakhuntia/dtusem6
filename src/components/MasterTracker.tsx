@@ -1,7 +1,9 @@
 import { useStore } from '@/store/useStore';
 import { Topic, Status, Priority, Difficulty } from '@/store/types';
 import { useState, useCallback, useMemo } from 'react';
-import { Trash2, Plus, Search, X } from 'lucide-react';
+import { Trash2, Plus, Search, X, Undo2, RefreshCw } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { DEFAULT_SYLLABUS } from './SyllabusImport';
 
 const statuses: Status[] = ['Not Started', 'In Progress', 'Done'];
 const priorities: Priority[] = ['High', 'Medium', 'Low'];
@@ -55,7 +57,39 @@ function SelectCell({ value, options, onChange }: { value: string; options: stri
 }
 
 export default function MasterTracker() {
-  const { topics, updateTopic, addTopic, deleteTopic, markTopicDone } = useStore();
+  const { topics, updateTopic, addTopic, deleteTopic, markTopicDone, undoDelete, restoreDefaultSyllabus } = useStore();
+  const { toast } = useToast();
+
+  const handleDelete = (id: string) => {
+    const topic = topics.find(t => t.id === id);
+    deleteTopic(id);
+    toast({
+      title: 'Topic deleted',
+      description: topic ? `"${topic.topic}" removed.` : 'Topic removed.',
+      action: (
+        <button
+          onClick={() => { const n = undoDelete(); if (n) toast({ title: 'Restored', description: `${n} topic restored.` }); }}
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90"
+        >
+          <Undo2 size={12} /> Undo
+        </button>
+      ),
+    });
+  };
+
+  const handleRestoreDefault = () => {
+    const { added, restoredDone } = restoreDefaultSyllabus(DEFAULT_SYLLABUS);
+    if (added === 0) {
+      toast({ title: 'Nothing to restore', description: 'All default topics are already in your tracker.' });
+    } else {
+      toast({
+        title: `Restored ${added} topic${added === 1 ? '' : 's'}`,
+        description: restoredDone > 0
+          ? `${restoredDone} marked as Done from previous revision history.`
+          : 'Added back as Not Started.',
+      });
+    }
+  };
 
   const [search, setSearch] = useState('');
   const [fCourse, setFCourse] = useState<string>('all');
@@ -114,14 +148,23 @@ export default function MasterTracker() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-lg font-semibold text-foreground">Master Tracker</h2>
-        <button
-          onClick={() => addTopic({})}
-          className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition"
-        >
-          <Plus size={14} /> Add Row
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRestoreDefault}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground hover:opacity-90 transition"
+            title="Re-add any default-syllabus topics missing from your tracker. Previously-completed topics return as Done."
+          >
+            <RefreshCw size={14} /> Restore Default Syllabus
+          </button>
+          <button
+            onClick={() => addTopic({})}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition"
+          >
+            <Plus size={14} /> Add Row
+          </button>
+        </div>
       </div>
 
       {/* Course stats */}
@@ -218,7 +261,7 @@ export default function MasterTracker() {
                 <td className="px-2 py-1 w-24 text-xs">{t.lastRevisedDate || '—'}</td>
                 <td className="px-2 py-1 max-w-[120px]"><EditableCell value={t.notes} onChange={v => updateTopic(t.id, 'notes', v)} /></td>
                 <td className="px-2 py-1">
-                  <button onClick={() => deleteTopic(t.id)} className="text-muted-foreground hover:text-destructive transition">
+                  <button onClick={() => handleDelete(t.id)} className="text-muted-foreground hover:text-destructive transition">
                     <Trash2 size={14} />
                   </button>
                 </td>

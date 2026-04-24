@@ -44,16 +44,27 @@ function generateDates(): string[] {
   return dates;
 }
 
+interface DeletedSnapshot {
+  topics: Topic[];
+  revisions: RevisionEntry[];
+  removedFromPlans: { date: string; topicId: string }[];
+  at: number;
+}
+
 interface AppState {
   topics: Topic[];
   dailyPlans: DailyPlan[];
   revisions: RevisionEntry[];
   focusMode: boolean;
+  lastDeleted: DeletedSnapshot | null;
 
   setTopics: (topics: Topic[]) => void;
   updateTopic: (id: string, field: keyof Topic, value: any) => void;
   addTopic: (topic: Partial<Topic>) => void;
   deleteTopic: (id: string) => void;
+  deleteTopics: (ids: string[]) => void;
+  undoDelete: () => number;
+  restoreDefaultSyllabus: (text: string) => { added: number; restoredDone: number };
   importSyllabus: (text: string) => void;
 
   updateDailyPlan: (date: string, field: keyof DailyPlan, value: any) => void;
@@ -119,6 +130,7 @@ export const useStore = create<AppState>()(
       dailyPlans: [],
       revisions: [],
       focusMode: false,
+      lastDeleted: null,
 
       setTopics: (topics) => set({ topics }),
 
@@ -145,10 +157,137 @@ export const useStore = create<AppState>()(
         }],
       })),
 
-      deleteTopic: (id) => set(state => ({
-        topics: state.topics.filter(t => t.id !== id),
-        revisions: state.revisions.filter(r => r.topicId !== id),
-      })),
+      deleteTopic: (id) => set(state => {
+        const topic = state.topics.find(t => t.id === id);
+        if (!topic) return {};
+        const removedRevisions = state.revisions.filter(r => r.topicId === id);
+        const removedFromPlans: { date: string; topicId: string }[] = [];
+        for (const p of state.dailyPlans) {
+          if (p.topicsPlanned.includes(id)) removedFromPlans.push({ date: p.date, topicId: id });
+        }
+        return {
+          topics: state.topics.filter(t => t.id !== id),
+          revisions: state.revisions.filter(r => r.topicId !== id),
+          dailyPlans: state.dailyPlans.map(p => ({
+            ...p,
+            topicsPlanned: p.topicsPlanned.filter(tid => tid !== id),
+            topicsCompleted: p.topicsCompleted.filter(tid => tid !== id),
+          })),
+          lastDeleted: {
+            topics: [topic],
+            revisions: removedRevisions,
+            removedFromPlans,
+            at: Date.now(),
+          },
+        };
+      }),
+
+      deleteTopics: (ids) => set(state => {
+        const idSet = new Set(ids);
+        const removed = state.topics.filter(t => idSet.has(t.id));
+        if (removed.length === 0) return {};
+        const removedRevisions = state.revisions.filter(r => idSet.has(r.topicId));
+        const removedFromPlans: { date: string; topicId: string }[] = [];
+        for (const p of state.dailyPlans) {
+          for (const tid of p.topicsPlanned) {
+            if (idSet.has(tid)) removedFromPlans.push({ date: p.date, topicId: tid });
+          }
+        }
+        return {
+          topics: state.topics.filter(t => !idSet.has(t.id)),
+          revisions: state.revisions.filter(r => !idSet.has(r.topicId)),
+          dailyPlans: state.dailyPlans.map(p => ({
+            ...p,
+            topicsPlanned: p.topicsPlanned.filter(tid => !idSet.has(tid)),
+            topicsCompleted: p.topicsCompleted.filter(tid => !idSet.has(tid)),
+          })),
+          lastDeleted: { topics: removed, revisions: removedRevisions, removedFromPlans, at: Date.now() },
+        };
+      }),
+
+      undoDelete: () => {
+        const snap = get().lastDeleted;
+        if (!snap) return 0;
+        set(state => {
+          const existingIds = new Set(state.topics.map(t => t.id));
+          const topicsToRestore = snap.topics.filter(t => !existingIds.has(t.id));
+          const existingRevIds = new Set(state.revisions.map(r => r.topicId));
+          const revsToRestore = snap.revisions.filter(r => !existingRevIds.has(r.topicId));
+          // Restore plan entries
+          const planMap = new Map(state.dailyPlans.map(p => [p.date, { ...p, topicsPlanned: [...p.topicsPlanned] }]));
+          for (const { date, topicId } of snap.removedFromPlans) {
+            const p = planMap.get(date);
+            if (p && !p.topicsPlanned.includes(topicId)) p.topicsPlanned.push(topicId);
+          }
+          return {
+            topics: [...state.topics, ...topicsToRestore],
+            revisions: [...state.revisions, ...revsToRestore],
+            dailyPlans: Array.from(planMap.values()),
+            lastDeleted: null,
+          };
+        });
+        return snap.topics.length;
+      },
+
+      restoreDefaultSyllabus: (text) => {
+        const parsed = parseSyllabus(text);
+        const state = get();
+        const norm = (s: string) =>
+          s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+        // Build existing key set so we don't duplicate topics already in tracker.
+        const existingKeys = new Set(
+          state.topics.map(t => `${norm(t.course)}|${norm(t.topic)}`)
+        );
+        // Build revision lookup by (course, topic) — these came from previously-completed topics.
+        const revByKey = new Map<string, RevisionEntry>();
+        for (const r of state.revisions) {
+          revByKey.set(`${norm(r.course)}|${norm(r.topic)}`, r);
+        }
+
+        const today = format(new Date(), 'yyyy-MM-dd');
+        const toAdd: Topic[] = [];
+        let restoredDone = 0;
+
+        for (const p of parsed) {
+          const key = `${norm(p.course || '')}|${norm(p.topic || '')}`;
+          if (existingKeys.has(key)) continue;
+          const prevRev = revByKey.get(key);
+          const wasDone = !!prevRev;
+          if (wasDone) restoredDone++;
+          toAdd.push({
+            id: generateId(),
+            course: p.course || '',
+            unit: p.unit || '',
+            unitTitle: p.unitTitle || '',
+            topic: p.topic || '',
+            status: wasDone ? ('Done' as Status) : ('Not Started' as Status),
+            priority: 'Medium' as Priority,
+            difficulty: 'Medium' as Difficulty,
+            estimatedTime: 1,
+            actualTime: 0,
+            revisionCount: wasDone ? Math.max(1, prevRev?.revision1Done || prevRev?.revision2Done || prevRev?.revision3Done ? 2 : 1) : 0,
+            lastRevisedDate: wasDone ? (prevRev?.lastStudied || today) : '',
+            notes: '',
+          });
+          existingKeys.add(key);
+        }
+
+        if (toAdd.length === 0) return { added: 0, restoredDone };
+
+        // Re-link revision entries to new topic ids so spaced revision still works.
+        set(s => {
+          const newTopics = [...s.topics, ...toAdd];
+          const newTopicByKey = new Map(newTopics.map(t => [`${norm(t.course)}|${norm(t.topic)}`, t.id]));
+          const updatedRevisions = s.revisions.map(r => {
+            const key = `${norm(r.course)}|${norm(r.topic)}`;
+            const newId = newTopicByKey.get(key);
+            return newId ? { ...r, topicId: newId } : r;
+          });
+          return { topics: newTopics, revisions: updatedRevisions };
+        });
+        return { added: toAdd.length, restoredDone };
+      },
 
       importSyllabus: (text) => {
         const parsed = parseSyllabus(text);

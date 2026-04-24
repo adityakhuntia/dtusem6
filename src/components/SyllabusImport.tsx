@@ -2,7 +2,7 @@ import { useStore } from '@/store/useStore';
 import { useState } from 'react';
 import { Upload } from 'lucide-react';
 
-const DEFAULT_SYLLABUS = `# MC302 – Mathematical Modelling and Simulation
+export const DEFAULT_SYLLABUS = `# MC302 – Mathematical Modelling and Simulation
 
 ## Unit 1: Mathematical Modelling Basics
 - Concept of mathematical modelling
