@@ -44,16 +44,27 @@ function generateDates(): string[] {
   return dates;
 }
 
+interface DeletedSnapshot {
+  topics: Topic[];
+  revisions: RevisionEntry[];
+  removedFromPlans: { date: string; topicId: string }[];
+  at: number;
+}
+
 interface AppState {
   topics: Topic[];
   dailyPlans: DailyPlan[];
   revisions: RevisionEntry[];
   focusMode: boolean;
+  lastDeleted: DeletedSnapshot | null;
 
   setTopics: (topics: Topic[]) => void;
   updateTopic: (id: string, field: keyof Topic, value: any) => void;
   addTopic: (topic: Partial<Topic>) => void;
   deleteTopic: (id: string) => void;
+  deleteTopics: (ids: string[]) => void;
+  undoDelete: () => number;
+  restoreDefaultSyllabus: (text: string) => { added: number; restoredDone: number };
   importSyllabus: (text: string) => void;
 
   updateDailyPlan: (date: string, field: keyof DailyPlan, value: any) => void;
