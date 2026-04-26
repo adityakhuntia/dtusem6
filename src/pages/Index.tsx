@@ -76,6 +76,7 @@ export default function Index() {
         {topics.length === 0 && <SyllabusImport />}
 
         {effectiveTab === 'dashboard' && <ProgressDashboard />}
+        {effectiveTab === 'progress' && <DailyProgressChart />}
         {effectiveTab === 'tracker' && (
           <>
             {topics.length > 0 && <SyllabusImport />}
