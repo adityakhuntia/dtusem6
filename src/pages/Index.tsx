@@ -9,10 +9,12 @@ import SyllabusImport from '@/components/SyllabusImport';
 import ExamCountdown from '@/components/ExamCountdown';
 import ExamSchedule from '@/components/ExamSchedule';
 import MidsemRevisionImport from '@/components/MidsemRevisionImport';
-import { BookOpen, Calendar, BarChart3, RotateCcw, Focus, List } from 'lucide-react';
+import DailyProgressChart from '@/components/DailyProgressChart';
+import { BookOpen, Calendar, BarChart3, RotateCcw, Focus, List, LineChart } from 'lucide-react';
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+  { id: 'progress', label: 'Progress Chart', icon: LineChart },
   { id: 'tracker', label: 'Master Tracker', icon: BookOpen },
   { id: 'condensed', label: 'Condensed', icon: List },
   { id: 'planner', label: 'Daily Planner', icon: Calendar },
